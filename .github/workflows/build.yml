@@ -1,0 +1,150 @@
+name: Build
+
+on:
+  pull_request:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PLUGIN_NAME: cpa-account-pilot
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: make test
+
+      - name: Vet
+        run: make vet
+
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-24.04
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+          - goos: darwin
+            goarch: amd64
+            runner: macos-15-intel
+          - goos: darwin
+            goarch: arm64
+            runner: macos-15
+          - goos: windows
+            goarch: amd64
+            runner: windows-2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup MinGW
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          path-type: inherit
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            make
+
+      - name: Resolve release metadata
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0-dev-${GITHUB_SHA:0:7}"
+          fi
+          ARCHIVE_NAME="${PLUGIN_NAME}_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.zip"
+          echo "VERSION=${VERSION}" >> "${GITHUB_ENV}"
+          echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> "${GITHUB_ENV}"
+
+      - name: Build and package plugin
+        run: make package VERSION="${VERSION}" GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}"
+
+      - name: Rename package
+        run: mv "dist/${PLUGIN_NAME}-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "dist/${ARCHIVE_NAME}"
+
+      - name: Create checksum
+        run: |
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "dist/${ARCHIVE_NAME}" > "dist/${ARCHIVE_NAME}.sha256"
+          else
+            shasum -a 256 "dist/${ARCHIVE_NAME}" > "dist/${ARCHIVE_NAME}.sha256"
+          fi
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE_NAME }}
+          path: |
+            dist/${{ env.ARCHIVE_NAME }}
+            dist/${{ env.ARCHIVE_NAME }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sort dist/*.sha256 > dist/checksums.txt
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" \
+              dist/*.zip \
+              dist/checksums.txt \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              dist/*.zip \
+              dist/checksums.txt \
+              --repo "${GITHUB_REPOSITORY}" \
+              --generate-notes
+          fi

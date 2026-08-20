@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "cpa-account-pilot",
+      "name": "CPA Account Pilot",
+      "description": "Example plugin provider.",
+      "author": "Solon.Z",
+      "version": "0.1.2",
+      "repository": "https://github.com/zhangshilun/CPA-Account-Pilot",
+      "homepage": "https://github.com/zhangshilun/CPA-Account-Pilot",
+      "license": "MIT",
+      "tags": ["provider"]
+    }
+  ]
+}

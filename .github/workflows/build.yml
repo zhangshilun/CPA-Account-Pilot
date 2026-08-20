@@ -55,7 +55,7 @@ jobs:
             runner: macos-15
           - goos: windows
             goarch: amd64
-            runner: windows-2025
+            runner: ubuntu-24.04
     defaults:
       run:
         shell: bash
@@ -69,16 +69,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Setup MinGW
-        if: runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          path-type: inherit
-          update: true
-          install: >-
-            mingw-w64-x86_64-gcc
-            make
+      - name: Setup Windows CGO toolchain
+        if: matrix.goos == 'windows'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64
+          echo "CC=x86_64-w64-mingw32-gcc" >> "${GITHUB_ENV}"
 
       - name: Resolve release metadata
         run: |
@@ -107,7 +103,7 @@ jobs:
           fi
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ env.ARCHIVE_NAME }}
           path: |

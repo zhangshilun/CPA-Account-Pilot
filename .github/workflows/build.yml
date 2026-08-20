@@ -96,10 +96,11 @@ jobs:
 
       - name: Create checksum
         run: |
+          cd dist
           if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "dist/${ARCHIVE_NAME}" > "dist/${ARCHIVE_NAME}.sha256"
+            sha256sum "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
           else
-            shasum -a 256 "dist/${ARCHIVE_NAME}" > "dist/${ARCHIVE_NAME}.sha256"
+            shasum -a 256 "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
           fi
 
       - name: Upload build artifact

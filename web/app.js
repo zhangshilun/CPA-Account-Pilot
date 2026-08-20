@@ -1184,8 +1184,14 @@
       }
       try {
         const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === "object" && parsed.type !== undefined) {
-          return stringifyValue(parsed.type);
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          parsed.error &&
+          typeof parsed.error === "object" &&
+          parsed.error.type !== undefined
+        ) {
+          return stringifyValue(parsed.error.type);
         }
       } catch (_) {
         // Keep non-JSON status_message unchanged.

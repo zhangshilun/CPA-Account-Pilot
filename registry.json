@@ -4,9 +4,9 @@
     {
       "id": "cpa-account-pilot",
       "name": "CPA Account Pilot",
-      "description": "Example plugin provider.",
+      "description": "CLIProxyAPI 原生插件，用于管理账号文件(非CPA认证文件)、复制账号密码、查看凭证状态和快速登录。",
       "author": "Solon.Z",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "repository": "https://github.com/zhangshilun/CPA-Account-Pilot",
       "homepage": "https://github.com/zhangshilun/CPA-Account-Pilot",
       "license": "MIT",

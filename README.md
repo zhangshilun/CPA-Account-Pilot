@@ -39,21 +39,33 @@ dist/cpa-account-vault.dll     # Windows
 
 ### 3. 账号文件
 
-账户文件保存在：
+`CPA_ACCOUNTS_VAULT_KEY` 为必填项，每个账号单独保存为 JSON 文件，密码使用插件可视化配置项 `CPA_ACCOUNTS_VAULT_KEY` 提供的 32 字节主密钥加密保存。该值必须是标准 Base64 编码。`CPA_ACCOUNTS_VAULT_DIR` 可选，默认值为 `/CLIProxyAPI/data/cpa-account-vault/`。
 
-```text
-/CLIProxyAPI/data/cpa-account-vault/
+将命令输出的密钥填写到 CLIProxyAPI 的插件配置页面。配置完成后请一直使用同一个密钥，否则已有账号密码无法解密。
+
+### 4. CLIProxyAPI 插件配置
+
+请在 CPA 的插件配置中声明以下字段：
+
+```yaml
+plugins:
+  enabled: true
+  dir: "plugins"
+  configs:
+    cpa-account-vault:
+      enabled: true
+      priority: 1
+      CPA_ACCOUNTS_VAULT_KEY: "替换为 openssl rand -base64 32 的输出"
+      CPA_ACCOUNTS_VAULT_DIR: "/CLIProxyAPI/data/cpa-account-vault/"
 ```
 
-每个账号单独保存为 JSON 文件，密码使用插件可视化配置项 `CPA_ACCOUNTS_VAULT_KEY` 提供的 32 字节主密钥加密保存。该值必须是标准 Base64 编码。`CPA_ACCOUNTS_VAULT_KEY` 为必填项，`CPA_ACCOUNTS_VAULT_DIR` 可选，默认值为 `/CLIProxyAPI/data/cpa-account-vault/`。
+`CPA_ACCOUNTS_VAULT_KEY` 必填；`CPA_ACCOUNTS_VAULT_DIR` 可省略，此时使用默认目录。修改目录时，插件会将旧 Vault 迁移到新的空目录。
 
 生成密钥示例：
 
 ```bash
 openssl rand -base64 32
 ```
-
-将命令输出的密钥填写到 CLIProxyAPI 的插件配置页面。配置完成后请一直使用同一个密钥，否则已有账号密码无法解密。
 
 ## LICENSE
 

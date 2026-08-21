@@ -6,12 +6,6 @@
     };
     const DEFAULT_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
     const DEFAULT_PRIVACY_MODE = "training_off";
-    const PROVIDER_LOGIN_ROUTES = Object.freeze({
-      antigravity: "/v0/management/antigravity-auth-url",
-      claude: "/v0/management/claude-auth-url",
-      codex: "/v0/management/codex-auth-url",
-      gemini: "/v0/management/gemini-auth-url"
-    });
     const AUTH_STATUS_LABELS = {
       active: "正常",
       disabled: "已禁用",
@@ -19,7 +13,58 @@
     };
     const textEncoder = new TextEncoder();
     const textDecoder = new TextDecoder();
-    const CPA_PLUGIN_API = "/v0/management/plugins/cpa-account-vault";
+    // 从 management.go 注入的页面配置读取接口，脚本不维护任何 API 路径。
+    function getPluginRuntimeConfig() {
+      const configElement = document.getElementById("cpa-plugin-runtime-config");
+      try {
+        return JSON.parse(configElement ? configElement.textContent : "{}");
+      } catch (_) {
+        return {};
+      }
+    }
+
+    function getPluginApiUrl(api, path) {
+      const normalizedPath = stringifyValue(path).trim();
+      if (!api.base || !normalizedPath) {
+        return "";
+      }
+      return `${api.base}${normalizedPath}`;
+    }
+
+    // 统一处理插件管理接口的鉴权头、JSON 请求体和响应解析。
+    async function requestPluginApi(api, path, options = {}) {
+      const endpoint = getPluginApiUrl(api, path);
+      if (!endpoint) {
+        throw new Error("未找到插件管理接口");
+      }
+      const headers = {
+        "Accept": "application/json",
+        "Authorization": `Bearer ${api.key}`,
+        ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...(options.headers || {})
+      };
+      const response = await fetch(endpoint, {
+        method: options.method || "GET",
+        cache: "no-store",
+        headers,
+        ...(options.body === undefined ? {} : { body: options.body })
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        throw new Error(payload.message || translateErrorCode(payload.error) || `请求失败（HTTP ${response.status}）`);
+      }
+      return payload;
+    }
+
+    function translateErrorCode(code) {
+      const messages = {
+        invalid_account_file: "账户文件格式无效。",
+        account_not_found: "未找到指定账户。",
+        invalid_account: "账户数据无效。",
+        invalid_import: "导入数据无效。"
+      };
+      return messages[stringifyValue(code).trim()] || "";
+    }
 
     function readHostStorage() {
       try { return window.parent !== window ? window.parent.localStorage : localStorage; } catch (_) { return null; }
@@ -119,8 +164,6 @@
 
     const elements = {
       pageTitle: document.getElementById("pageTitle"),
-      cpaBackBtn: document.getElementById("cpaBackBtn"),
-      cpaBackText: document.getElementById("cpaBackText"),
       pageSubtitle: document.getElementById("pageSubtitle"),
       settingsWrap: document.getElementById("settingsWrap"),
       settingsBtn: document.getElementById("settingsBtn"),
@@ -134,13 +177,8 @@
       mailboxFilterOptions: Array.from(document.querySelectorAll(".mailbox-filter-option")),
       statusFilter: document.getElementById("statusFilter"),
       statusFilterOptions: [],
-      toolbar: document.querySelector(".toolbar"),
-      accountFieldsTitle: document.getElementById("accountFieldsTitle"),
-      emailFieldLabel: document.getElementById("emailFieldLabel"),
       emailFieldInput: document.getElementById("emailFieldInput"),
-      passwordFieldLabel: document.getElementById("passwordFieldLabel"),
       passwordFieldInput: document.getElementById("passwordFieldInput"),
-      mailboxUrlFieldLabel: document.getElementById("mailboxUrlFieldLabel"),
       mailboxUrlFieldInput: document.getElementById("mailboxUrlFieldInput"),
       searchInput: document.getElementById("searchInput"),
       message: document.getElementById("message"),
@@ -184,7 +222,30 @@
     loadAccountFieldSettings();
     applyTheme();
     applyLocale();
-    loadPersistedAccounts();
+    initializeVaultPage();
+
+    // 页面启动时先确认 Vault 已配置，避免缺少密钥时继续执行账号接口调用。
+    async function initializeVaultPage() {
+      const api = getApiSettings();
+      if (api.base && api.key && !(await isVaultConfigured(api))) {
+        return;
+      }
+      await loadPersistedAccounts();
+    }
+
+    // isVaultConfigured 从 management.go 注入的状态接口读取当前 Vault 配置结果。
+    async function isVaultConfigured(api) {
+      try {
+        const status = await requestPluginApi(api, getPluginRuntimeConfig().vaultStatusPath);
+        if (status.configured) {
+          return true;
+        }
+        setMessage(stringifyValue(status.message).trim() || "请在 CPA 插件配置中填写 CPA_ACCOUNTS_VAULT_KEY。", "error");
+      } catch (error) {
+        setMessage(error.message || "无法读取 Vault 配置状态。", "error");
+      }
+      return false;
+    }
 
     function getStoredAccountFields() {
       return {
@@ -286,12 +347,13 @@
 
     function translate(key, params) {
       const templates = {
+        selectAccountFile: "请选择账户文件。",
         unknownError: "未知错误", accountReadFailed: "账户文件读取失败。", noAccountObjects: "未读取到账户对象。",
         statusReadFailed: "读取失败", browserWritePermissionMissing: "浏览器未授权写入", reloadingList: "正在刷新认证文件状态...",
         reloadList: "刷新认证", refreshing: "刷新中...", refreshFiltered: "刷新筛选数据", refreshAll: "刷新邮箱",
-        noMatchingAccounts: "没有匹配的账户。", cpaDownloadAction: "账户文件下载", mailboxAction: "邮箱", loginAction: "登陆",
+        noMatchingAccounts: "没有匹配的账户。", cpaDownloadAction: "下载账户文件", mailboxAction: "邮箱", loginAction: "登录",
         missingStatusLabel: "缺失", passwordMaskedTitle: "已脱敏，点击图标复制原始值", copyLabel: "{label}",
-        invalidProviderAuthUrl: "管理端未返回有效的 {provider} OAuth 授权链接", unsupportedLoginProvider: "不支持 Provider “{provider}” 的登录。",
+        invalidProviderAuthUrl: "管理端未返回有效的 {provider} 授权链接", unsupportedLoginProvider: "不支持“{provider}”的登录。",
         emailLabel: "邮箱", passwordLabel: "密码", contentLabel: "内容",
         reloadListFailed: "刷新账户列表失败：{error}", loadedAccounts: "已加载 {count} 个账户（{fileName}）",
         refreshRunning: "刷新正在进行中，请稍候。", noMailboxApiTargets: "没有可刷新的邮箱账户。",
@@ -303,7 +365,10 @@
         mailboxOpened: "已打开邮箱：{email}", loginRunning: "登录正在进行中，请稍候。",
         creatingLoginLink: "正在为 {email} 创建登录链接...", loginBlockedCopied: "登录页面被浏览器拦截，链接已复制。",
         loginBlockedCopyFailed: "登录页面被浏览器拦截，链接复制失败。", fixedLoginTabOpened: "已打开登录页面：{email}",
-        providerLoginFailed: "{provider} 登录失败：{error}", copySuccess: "已复制{label}。", copyFailed: "复制{label}失败。"
+        providerLoginFailed: "{provider} 登录失败：{error}", copySuccess: "已复制{label}。", copyFailed: "复制{label}失败。",
+        statusPending: "等待检查", statusReading: "正在读取",
+        statusMailInfoUnchanged: "邮件信息未变化", statusUpdated: "已更新", statusLoggingIn: "正在登录",
+        statusOpenFailed: "打开失败", statusLoginOpened: "登录页面已打开", statusLoginFailed: "登录失败"
       };
       const template = templates[key] || key;
       return template.replace(/\{(\w+)\}/g, (match, name) => {
@@ -439,18 +504,13 @@
       if (!api.base || !api.key || state.isLoadingPersistedAccounts) return;
       state.isLoadingPersistedAccounts = true;
       try {
-        const response = await fetch(`${api.base}${CPA_PLUGIN_API}/account-files`, {
-          method: "GET", cache: "no-store",
-          headers: { "Accept": "application/json", "Authorization": `Bearer ${api.key}` }
-        });
-        const payload = await readJsonResponse(response);
-        if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+        const payload = await requestPluginApi(api, getPluginRuntimeConfig().accountFilesPath);
         const accounts = Array.isArray(payload.accounts) ? payload.accounts : [];
         if (accounts.length) {
           state.accounts = accounts.map(normalizeAccount);
           state.accountFileText = accounts.map((account) => JSON.stringify(prepareAccountForWrite(account))).join("\n") + "\n";
           state.accountObjectRanges = [];
-          setMessageKey("loadedAccounts", "success", { count: accounts.length, fileName: "cpa-account-vault" });
+          setMessageKey("loadedAccounts", "success", { count: accounts.length, fileName: document.title });
         } else if (!state.fileHandle) {
           state.accounts = [];
           state.accountFileText = "";
@@ -489,8 +549,8 @@
           fileName: state.fileName
         });
         await persistAccountsToCpa();
-        render();
-        await refreshAuthFileStatuses();
+        await loadPersistedAccounts();
+        return;
       } catch (error) {
         state.accounts = [];
         state.statuses.clear();
@@ -503,71 +563,32 @@
     function extractAccountRecords(text) {
       const records = [];
       const source = stringifyValue(text);
-      let cursor = 0;
-
-      while (cursor < source.length) {
-        const start = source.indexOf("{", cursor);
-        if (start === -1) {
-          break;
-        }
-
-        const end = findObjectEnd(source, start);
-        if (end === -1) {
-          break;
-        }
-
-        const chunk = source.slice(start, end + 1);
-        try {
-          const parsed = JSON.parse(chunk);
-          if (isAccountObject(parsed)) {
-            records.push({
-              account: parsed,
-              start,
-              end
-            });
-          }
-        } catch (error) {
-          // Ignore non-account JSON fragments and continue scanning.
-        }
-
-        cursor = end + 1;
-      }
-
-      return records;
-    }
-
-    function findObjectEnd(source, start) {
-      let depth = 0;
-      let inString = false;
-      let escaped = false;
-
-      for (let index = start; index < source.length; index += 1) {
-        const char = source[index];
-
-        if (inString) {
-          if (escaped) {
-            escaped = false;
-          } else if (char === "\\") {
-            escaped = true;
-          } else if (char === "\"") {
-            inString = false;
-          }
+      let lineStart = 0;
+      const lines = source.split(/\r?\n/);
+      for (let lineNumber = 0; lineNumber < lines.length; lineNumber += 1) {
+        const line = lines[lineNumber];
+        const trimmed = line.trim();
+        if (!trimmed) {
+          lineStart += line.length + (source[lineStart + line.length] === "\r" ? 2 : 1);
           continue;
         }
 
-        if (char === "\"") {
-          inString = true;
-        } else if (char === "{") {
-          depth += 1;
-        } else if (char === "}") {
-          depth -= 1;
-          if (depth === 0) {
-            return index;
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (!isAccountObject(parsed)) {
+            throw new Error(`第 ${lineNumber + 1} 行不是有效的账户对象`);
           }
+          const start = lineStart + line.indexOf(trimmed);
+          records.push({ account: parsed, start, end: start + trimmed.length - 1 });
+        } catch (error) {
+          throw new Error(error instanceof SyntaxError
+            ? `第 ${lineNumber + 1} 行不是有效的 JSON 对象`
+            : error.message);
         }
-      }
 
-      return -1;
+        lineStart += line.length + (source[lineStart + line.length] === "\r" ? 2 : 1);
+      }
+      return records;
     }
 
     function isAccountObject(value) {
@@ -734,18 +755,7 @@
       }
 
       try {
-        const response = await fetch(`${api.base}${CPA_PLUGIN_API}/auth-files`, {
-          method: "GET",
-          cache: "no-store",
-          headers: {
-            "Accept": "application/json",
-            "Authorization": `Bearer ${api.key}`
-          }
-        });
-        const payload = await readJsonResponse(response);
-        if (!response.ok) {
-          throw new Error(payload.error || `HTTP ${response.status}`);
-        }
+        const payload = await requestPluginApi(api, getPluginRuntimeConfig().authFilesPath);
 
         const nextStatuses = new Map();
         extractAuthFileRecords(payload).forEach((record) => {
@@ -814,6 +824,7 @@
       try {
         setStatus(index, "warn", "statusReading");
         renderRows();
+        await waitForRenderFrame();
 
         const response = await fetch(mailboxUrl, {
           method: "GET",
@@ -831,11 +842,6 @@
         const changed = previousSubject !== subject || stringifyValue(account.read_at) !== nextReadAt;
         account.mail_subject = subject;
         account.read_at = nextReadAt;
-        if (subject.includes("Access Deactivated")) {
-          setStatus(index, "bad", "statusMailboxDeactivated");
-          return changed;
-        }
-
         if (!changed) {
           setStatus(index, "unchanged", "statusMailInfoUnchanged");
           return false;
@@ -850,6 +856,16 @@
         });
         return false;
       }
+    }
+
+    function waitForRenderFrame() {
+      return new Promise((resolve) => {
+        if (typeof window.requestAnimationFrame === "function") {
+          window.requestAnimationFrame(() => resolve());
+          return;
+        }
+        setTimeout(resolve, 0);
+      });
     }
 
     async function readMailboxPayload(response) {
@@ -925,46 +941,7 @@
         throw new Error("未找到 CPA API 会话");
       }
       const payload = state.accounts.map((account) => JSON.stringify(prepareAccountForWrite(account))).join("\n");
-      const response = await fetch(`${api.base}${CPA_PLUGIN_API}/account-files`, {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Accept": "application/json", "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-        body: payload
-      });
-      const result = await readJsonResponse(response);
-      if (!response.ok) {
-        throw new Error(result.error || `HTTP ${response.status}`);
-      }
-      return result;
-    }
-
-    async function requestWritePermission() {
-      if (!state.fileHandle || !state.fileHandle.queryPermission || !state.fileHandle.requestPermission) {
-        return false;
-      }
-
-      const options = { mode: "readwrite" };
-      if ((await state.fileHandle.queryPermission(options)) === "granted") {
-        return true;
-      }
-
-      return (await state.fileHandle.requestPermission(options)) === "granted";
-    }
-
-    function serializeAccountFile() {
-      if (state.accountObjectRanges.length !== state.accounts.length) {
-        return `${state.accounts.map((account) => JSON.stringify(prepareAccountForWrite(account))).join("\n")}\n`;
-      }
-
-      let cursor = 0;
-      let content = "";
-      state.accountObjectRanges.forEach((range, index) => {
-        content += state.accountFileText.slice(cursor, range.start);
-        content += JSON.stringify(prepareAccountForWrite(state.accounts[index]));
-        cursor = range.end + 1;
-      });
-      content += state.accountFileText.slice(cursor);
-      return content;
+      return requestPluginApi(api, getPluginRuntimeConfig().accountFilesPath, { method: "POST", body: payload });
     }
 
     function prepareAccountForWrite(account) {
@@ -1000,15 +977,6 @@
         delete nextAccount.mailbox_url;
       }
       return nextAccount;
-    }
-
-    function syncAccountFileState(content) {
-      state.accountFileText = content;
-      const records = extractAccountRecords(content);
-      state.accountObjectRanges = records.map((record) => ({
-        start: record.start,
-        end: record.end
-      }));
     }
 
     function render() {
@@ -1077,7 +1045,7 @@
           <tr class="account-row${rowIndex % 2 ? " is-striped" : ""}">
             <td>${renderCopyCell(account.email, index, "email", "", false)}</td>
             <td>${renderCopyCell(account.password, index, "password", maskPassword(account.password), false)}</td>
-            <td>${renderMailboxInfoCell(account.mail_subject, account.read_at)}</td>
+            <td>${renderMailboxInfoCell(account.mail_subject, account.read_at, mailboxApiStatus)}</td>
             <td class="status-cell ${escapeHtml(authFileStatus.type)}"><span class="status-text auth-status-text">${escapeHtml(getAuthFileStatusLabel(authFileStatus) || "/")}</span></td>
             <td class="status-cell ${escapeHtml(authFileStatus.type)}">${getAuthFileMessageText(authFileStatus) ? `<span class="auth-status-message">${escapeHtml(getAuthFileMessageText(authFileStatus))}</span>` : `<span class="muted">/</span>`}</td>
             <td>${renderAuthMetaCell(authFileStatus)}</td>
@@ -1350,11 +1318,16 @@
       `;
     }
 
-    function renderMailboxInfoCell(subject, readAt) {
+    function renderMailboxInfoCell(subject, readAt, status) {
       const subjectText = stringifyValue(subject) || "-";
       const timeText = stringifyValue(readAt) || "-";
+      const statusText = getStatusText(status);
+      const isReading = status && status.key === "statusReading";
+      const subjectMarkup = isReading
+        ? `<span class="mail-subject mail-subject-loading" title="${escapeHtml(statusText)}"><span class="mail-loading-spinner" aria-hidden="true"></span>${escapeHtml(statusText)}</span>`
+        : `<span class="mail-subject" title="${escapeHtml(subjectText)}">${escapeHtml(subjectText)}</span>`;
       return `<div class="mail-info">
-        <span class="mail-subject" title="${escapeHtml(subjectText)}">${escapeHtml(subjectText)}</span>
+        ${subjectMarkup}
         <span class="mail-time" title="${escapeHtml(timeText)}">${escapeHtml(timeText)}</span>
       </div>`;
     }
@@ -1473,14 +1446,14 @@
         const text = JSON.stringify(accounts[0], null, 2);
         return {
           parts: [text],
-          name: `${sanitizeFilename(source.email, "account")}.json`,
+          name: `${sanitizeFilename(getAccountFilenameValue(source), "account")}.json`,
           mime: "application/json;charset=utf-8",
           count: 1
         };
       }
 
       const files = accounts.map((account, index) => ({
-        name: `${sanitizeFilename(rows[index].account.email, "account")}.json`,
+        name: `${sanitizeFilename(getAccountFilenameValue(rows[index].account), "account")}.json`,
         text: JSON.stringify(account, null, 2)
       }));
       const groupName = group && group !== "/" ? group : "unknown-date";
@@ -1619,6 +1592,11 @@
     function sanitizeFilename(name, fallback) {
       const cleaned = String(name ?? "").trim().replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "_");
       return cleaned || fallback;
+    }
+
+    function getAccountFilenameValue(account) {
+      const fields = getAccountFields();
+      return firstText(account && account[fields.email], account && account.email);
     }
 
     function toIso8(date) {
@@ -1863,160 +1841,6 @@
       return output;
     }
 
-    function normalizeRecord(item) {
-      if (!item || typeof item !== "object" || Array.isArray(item) || Array.isArray(item.accounts)) {
-        return null;
-      }
-
-      let email = "";
-      let password = "";
-      let loginIdentity = "";
-      let phone = "";
-      let accessToken = "";
-      let refreshToken = "";
-      let idToken = "";
-      let sessionToken = "";
-      let clientId = "";
-      let chatgptAccountId = "";
-      let chatgptUserId = "";
-      let organizationId = "";
-      let projectId = "";
-      let workspaceId = "";
-      let createdAt = 0;
-      let lastUsed = 0;
-      let status = "";
-      let source = "";
-      let disabled = false;
-      let accountClaimsEmail = "";
-      let privacyMode = "";
-      let wsEnabled = null;
-      let wsMode = "";
-
-      if (item.tokens && typeof item.tokens === "object" && !Array.isArray(item.tokens)) {
-        const tokens = item.tokens;
-        email = firstText(item.email);
-        accessToken = firstText(tokens.access_token);
-        refreshToken = firstText(tokens.refresh_token);
-        idToken = firstText(tokens.id_token);
-        chatgptAccountId = firstText(item.chatgpt_account_id, item.account_id);
-        createdAt = coerceTs(item.created_at);
-        lastUsed = coerceTs(item.last_used);
-        source = "codex_input";
-      } else if (item.credentials && typeof item.credentials === "object" && !Array.isArray(item.credentials)) {
-        const credentials = item.credentials;
-        const extra = item.extra && typeof item.extra === "object" && !Array.isArray(item.extra) ? item.extra : {};
-        email = firstText(extra.email, credentials.email, item.name);
-        accessToken = firstText(credentials.access_token);
-        refreshToken = firstText(credentials.refresh_token);
-        idToken = firstText(credentials.id_token);
-        sessionToken = firstText(credentials.session_token);
-        clientId = firstText(credentials.client_id, DEFAULT_CLIENT_ID);
-        chatgptAccountId = firstText(credentials.chatgpt_account_id, credentials.account_id, item.chatgpt_account_id, item.account_id);
-        chatgptUserId = firstText(credentials.chatgpt_user_id);
-        organizationId = firstText(credentials.organization_id);
-        projectId = firstText(credentials.project_id);
-        workspaceId = firstText(projectId);
-        createdAt = coerceTs(item.created_at);
-        lastUsed = coerceTs(item.last_used);
-        status = firstText(item.status);
-        source = firstText(item.notes, "sub_bundle_input");
-        disabled = Boolean(item.disabled);
-        accountClaimsEmail = firstText(extra.email);
-        privacyMode = firstText(extra.privacy_mode);
-        wsEnabled = extra.openai_oauth_responses_websockets_v2_enabled;
-        wsMode = firstText(extra.openai_oauth_responses_websockets_v2_mode);
-      } else {
-        email = firstText(item.email);
-        password = firstText(item.password);
-        loginIdentity = firstText(item.login_identity);
-        phone = firstText(item.phone);
-        accessToken = firstText(item.access_token);
-        refreshToken = firstText(item.refresh_token);
-        idToken = firstText(item.id_token);
-        sessionToken = firstText(item.session_token);
-        clientId = firstText(item.client_id, DEFAULT_CLIENT_ID);
-        chatgptAccountId = firstText(item.chatgpt_account_id, item.account_id);
-        chatgptUserId = firstText(item.chatgpt_user_id);
-        organizationId = firstText(item.organization_id);
-        projectId = firstText(item.project_id);
-        workspaceId = firstText(item.workspace_id, projectId);
-        createdAt = coerceTs(item.created_at);
-        lastUsed = coerceTs(item.last_used);
-        status = firstText(item.status);
-        source = firstText(item.source, "unified_input");
-        disabled = Boolean(item.disabled);
-        accountClaimsEmail = firstText(item.account_claims_email);
-        privacyMode = firstText(item.privacy_mode);
-        wsEnabled = item.openai_oauth_responses_websockets_v2_enabled;
-        wsMode = firstText(item.openai_oauth_responses_websockets_v2_mode);
-      }
-      if (!email) {
-        return null;
-      }
-
-      const idPayload = decodeJwtPayload(idToken);
-      const accessPayload = decodeJwtPayload(accessToken);
-      const idAuth = extractAuth(idPayload);
-      const accessAuth = extractAuth(accessPayload);
-      const accessProfile = extractProfile(accessPayload);
-      const record = {
-        version: Number.parseInt(item.version || 1, 10) || 1,
-        platform: firstText(item.platform, "chatgpt"),
-        email,
-        password,
-        login_identity: firstText(loginIdentity),
-        phone: firstText(phone),
-        access_token: accessToken,
-        refresh_token: refreshToken,
-        id_token: idToken,
-        session_token: sessionToken,
-        client_id: firstText(clientId, DEFAULT_CLIENT_ID),
-        chatgpt_account_id: firstText(chatgptAccountId, extractAccountIdFromAuth(idAuth), extractAccountIdFromAuth(accessAuth)),
-        chatgpt_user_id: firstText(
-          chatgptUserId,
-          idAuth.chatgpt_user_id,
-          idAuth.user_id,
-          idAuth.chatgpt_account_user_id,
-          accessAuth.chatgpt_user_id,
-          accessAuth.user_id,
-          accessAuth.chatgpt_account_user_id
-        ),
-        organization_id: firstText(organizationId, extractOrganizationId(idAuth, accessAuth)),
-        project_id: firstText(projectId, workspaceId, idAuth.project_id, accessAuth.project_id),
-        workspace_id: firstText(workspaceId, projectId, idAuth.project_id, accessAuth.project_id),
-        created_at: createdAt,
-        last_used: lastUsed,
-        status,
-        source,
-        disabled,
-        account_claims_email: firstText(accountClaimsEmail, idPayload.email, accessProfile.email),
-        plan_type: firstText(item.plan_type, idAuth.chatgpt_plan_type, accessAuth.chatgpt_plan_type, "free"),
-        privacy_mode: firstText(privacyMode, DEFAULT_PRIVACY_MODE),
-        openai_oauth_responses_websockets_v2_enabled: wsEnabled !== null ? Boolean(wsEnabled) : false,
-        openai_oauth_responses_websockets_v2_mode: firstText(wsMode, "off")
-      };
-      if (record.login_identity && !record.phone && !looksLikeEmail(record.login_identity)) {
-        record.phone = record.login_identity;
-      }
-      return finalizeRecord(record);
-    }
-
-    function buildCpaPayload(record) {
-      const item = finalizeRecord(record);
-      const exp = coerceTs(decodeJwtPayload(item.access_token).exp);
-      return {
-        type: "codex",
-        email: item.email,
-        expired: exp ? toIso8(new Date(exp * 1000)) : "",
-        id_token: item.id_token,
-        account_id: firstText(item.chatgpt_account_id),
-        disabled: Boolean(item.disabled),
-        access_token: item.access_token,
-        last_refresh: toIso8(new Date()),
-        refresh_token: item.refresh_token
-      };
-    }
-
     async function handleMailClick(button) {
       const index = Number.parseInt(button.dataset.mailIndex, 10);
       const account = state.accounts[index];
@@ -2162,7 +1986,11 @@
     }
 
     function getProviderLoginRoute(provider) {
-      return PROVIDER_LOGIN_ROUTES[provider] || "";
+      const normalizedProvider = stringifyValue(provider).trim().toLowerCase();
+      const template = stringifyValue(getPluginRuntimeConfig().provider_login_path_template).trim();
+      return /^[a-z0-9-]+$/.test(normalizedProvider) && template.includes("{provider}")
+        ? template.replace("{provider}", normalizedProvider)
+        : "";
     }
 
     function isProviderAuthorizeUrl(rawUrl) {
@@ -2172,17 +2000,6 @@
       } catch (error) {
         return false;
       }
-    }
-
-    function normalizeManagementBaseUrl(value) {
-      const text = stringifyValue(value).trim().replace(/\/+$/, "");
-      if (!text) {
-        return "";
-      }
-      if (!/^https?:\/\//i.test(text)) {
-        return "";
-      }
-      return text;
     }
 
     function loadAccountFieldSettings() {

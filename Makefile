@@ -1,6 +1,7 @@
 PLUGIN_ID := cpa-account-vault
-VERSION ?= 0.1.3
+REGISTRY_FILE := $(CURDIR)/registry.json
 GO ?= go
+VERSION := $(shell $(GO) run ./tools/version -registry "$(REGISTRY_FILE)" -plugin "$(PLUGIN_ID)")
 DIST_DIR := $(CURDIR)/dist
 GOOS ?= $(shell $(GO) env GOOS)
 GOARCH ?= $(shell $(GO) env GOARCH)
@@ -16,28 +17,34 @@ endif
 PLUGIN_FILE := $(DIST_DIR)/$(PLUGIN_ID).$(PLUGIN_EXT)
 PACKAGE_FILE := $(DIST_DIR)/$(PLUGIN_ID)-$(VERSION)-$(GOOS)-$(GOARCH).zip
 
-.PHONY: build plugin package test vet verify clean
+.PHONY: build plugin package test vet verify clean version check-version
 
 build: plugin
 
-plugin:
+plugin: check-version
 	mkdir -p $(DIST_DIR)
 	CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build -buildvcs=false -ldflags "-X main.pluginVersion=$(VERSION)" -buildmode=c-shared -o $(PLUGIN_FILE) .
 	rm -f $(DIST_DIR)/$(PLUGIN_ID).h
+
+version: check-version
+	@printf '%s\n' $(VERSION)
+
+check-version:
+	@$(GO) run ./tools/version -registry "$(REGISTRY_FILE)" -plugin "$(PLUGIN_ID)" >/dev/null
 
 package: plugin
 	@command -v zip >/dev/null || (echo "zip is required for package" && exit 1)
 	zip -j -q $(PACKAGE_FILE) $(PLUGIN_FILE)
 
 test:
-	$(GO) test ./...
+	$(GO) test . ./web
 
 vet:
-	$(GO) vet ./...
+	$(GO) vet . ./web
 
 verify:
 	test -z "$$(gofmt -l $$(find . -name '*.go'))"
-	$(GO) test ./...
+	$(GO) test . ./web
 	$(MAKE) vet
 	$(MAKE) build
 

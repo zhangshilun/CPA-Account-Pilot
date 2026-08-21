@@ -1,7 +1,8 @@
 PLUGIN_ID := cpa-account-vault
 REGISTRY_FILE := $(CURDIR)/registry.json
 GO ?= go
-VERSION := $(shell $(GO) run ./tools/version -registry "$(REGISTRY_FILE)" -plugin "$(PLUGIN_ID)")
+HOST_GO_RUN := env -u GOOS -u GOARCH $(GO) run
+VERSION := $(shell $(HOST_GO_RUN) ./tools/version -registry "$(REGISTRY_FILE)" -plugin "$(PLUGIN_ID)")
 DIST_DIR := $(CURDIR)/dist
 GOOS ?= $(shell $(GO) env GOOS)
 GOARCH ?= $(shell $(GO) env GOARCH)
@@ -30,7 +31,7 @@ version: check-version
 	@printf '%s\n' $(VERSION)
 
 check-version:
-	@$(GO) run ./tools/version -registry "$(REGISTRY_FILE)" -plugin "$(PLUGIN_ID)" >/dev/null
+	@$(HOST_GO_RUN) ./tools/version -registry "$(REGISTRY_FILE)" -plugin "$(PLUGIN_ID)" >/dev/null
 
 package: plugin
 	@command -v zip >/dev/null || (echo "zip is required for package" && exit 1)

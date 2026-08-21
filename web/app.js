@@ -6,6 +6,12 @@
     };
     const DEFAULT_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
     const DEFAULT_PRIVACY_MODE = "training_off";
+    const PROVIDER_LOGIN_ROUTES = Object.freeze({
+      antigravity: "/v0/management/antigravity-auth-url",
+      claude: "/v0/management/claude-auth-url",
+      codex: "/v0/management/codex-auth-url",
+      gemini: "/v0/management/gemini-auth-url"
+    });
     const AUTH_STATUS_LABELS = {
       active: "正常",
       disabled: "已禁用",
@@ -13,7 +19,7 @@
     };
     const textEncoder = new TextEncoder();
     const textDecoder = new TextDecoder();
-    const CPA_PLUGIN_API = "/v0/management/plugins/cpa-account-pilot";
+    const CPA_PLUGIN_API = "/v0/management/plugins/cpa-account-vault";
 
     function readHostStorage() {
       try { return window.parent !== window ? window.parent.localStorage : localStorage; } catch (_) { return null; }
@@ -107,7 +113,8 @@
       messageParams: {},
       messageText: "",
       messageType: "",
-      statuses: new Map()
+      statuses: new Map(),
+      collapsedGroups: new Set()
     };
 
     const elements = {
@@ -178,16 +185,6 @@
     applyTheme();
     applyLocale();
     loadPersistedAccounts();
-    window.setInterval(() => {
-      const nextTheme = getCpaTheme();
-      if (nextTheme !== state.themeMode) {
-        state.themeMode = nextTheme;
-        applyTheme();
-      }
-      if (!state.accounts.length) {
-        void loadPersistedAccounts();
-      }
-    }, 1000);
 
     function getStoredAccountFields() {
       return {
@@ -294,7 +291,19 @@
         reloadList: "刷新认证", refreshing: "刷新中...", refreshFiltered: "刷新筛选数据", refreshAll: "刷新邮箱",
         noMatchingAccounts: "没有匹配的账户。", cpaDownloadAction: "账户文件下载", mailboxAction: "邮箱", loginAction: "登陆",
         missingStatusLabel: "缺失", passwordMaskedTitle: "已脱敏，点击图标复制原始值", copyLabel: "{label}",
-        invalidCodexAuthUrl: "管理端未返回有效的 Codex OAuth 授权链接", emailLabel: "邮箱", passwordLabel: "密码", contentLabel: "内容"
+        invalidProviderAuthUrl: "管理端未返回有效的 {provider} OAuth 授权链接", unsupportedLoginProvider: "不支持 Provider “{provider}” 的登录。",
+        emailLabel: "邮箱", passwordLabel: "密码", contentLabel: "内容",
+        reloadListFailed: "刷新账户列表失败：{error}", loadedAccounts: "已加载 {count} 个账户（{fileName}）",
+        refreshRunning: "刷新正在进行中，请稍候。", noMailboxApiTargets: "没有可刷新的邮箱账户。",
+        refreshingFilteredData: "正在刷新筛选出的邮箱...", refreshingAllMailboxes: "正在刷新全部邮箱...",
+        refreshCompleteChanged: "邮箱刷新完成，更新了 {changed} 个账户。", accountFileWritten: "账户文件已保存。",
+        accountFileWriteFailed: "账户文件保存失败：{error}", cpaNoRows: "当前分组没有可下载的账户。",
+        cpaDownloadReady: "已下载 {count} 个账户。", cpaDownloadFailed: "账户下载失败：{error}",
+        mailboxMissing: "该账户没有配置邮箱地址。", mailboxBlockedCopied: "邮箱页面被浏览器拦截，地址已复制。",
+        mailboxOpened: "已打开邮箱：{email}", loginRunning: "登录正在进行中，请稍候。",
+        creatingLoginLink: "正在为 {email} 创建登录链接...", loginBlockedCopied: "登录页面被浏览器拦截，链接已复制。",
+        loginBlockedCopyFailed: "登录页面被浏览器拦截，链接复制失败。", fixedLoginTabOpened: "已打开登录页面：{email}",
+        providerLoginFailed: "{provider} 登录失败：{error}", copySuccess: "已复制{label}。", copyFailed: "复制{label}失败。"
       };
       const template = templates[key] || key;
       return template.replace(/\{(\w+)\}/g, (match, name) => {
@@ -441,7 +450,7 @@
           state.accounts = accounts.map(normalizeAccount);
           state.accountFileText = accounts.map((account) => JSON.stringify(prepareAccountForWrite(account))).join("\n") + "\n";
           state.accountObjectRanges = [];
-          setMessageKey("loadedAccounts", "success", { count: accounts.length, fileName: "cpa-account-pilot" });
+          setMessageKey("loadedAccounts", "success", { count: accounts.length, fileName: "cpa-account-vault" });
         } else if (!state.fileHandle) {
           state.accounts = [];
           state.accountFileText = "";
@@ -584,7 +593,7 @@
         ...source,
         email: readConfiguredField(source, fields.email, "email"),
         password: readConfiguredField(source, fields.password, "password"),
-        mailbox_url: readConfiguredField(source, fields.mailbox_url, "mailbox_url"),
+        mailbox_url: decodeHtmlEntities(readConfiguredField(source, fields.mailbox_url, "mailbox_url")),
         mail_subject: stringifyValue(source.mail_subject || source.subject || ""),
         read_at: stringifyValue(source.read_at || source.time || "")
       };
@@ -747,7 +756,10 @@
             nextStatuses.set(email, {
               type: "muted",
               statusCode: statusText,
-              exception: exceptionText
+              exception: exceptionText,
+              planType: stringifyValue(record.plan_type).trim(),
+              provider: stringifyValue(record.provider).trim(),
+              websockets: typeof record.websockets === "boolean" ? record.websockets : null
             });
           }
         });
@@ -778,7 +790,10 @@
           records.push({
             email: value.email,
             status: value.status,
-            status_message: value.status_message
+            status_message: value.status_message,
+            plan_type: value.plan_type,
+            provider: value.provider,
+            websockets: value.websockets
           });
         }
 
@@ -789,17 +804,18 @@
       return records;
     }
 
-
     async function refreshAccount(account, index) {
-      if (!account.mailbox_url) {
+      const mailboxUrl = decodeHtmlEntities(stringifyValue(account && account.mailbox_url).trim());
+      if (!mailboxUrl) {
         return false;
       }
+      account.mailbox_url = mailboxUrl;
 
       try {
         setStatus(index, "warn", "statusReading");
         renderRows();
 
-        const response = await fetch(account.mailbox_url, {
+        const response = await fetch(mailboxUrl, {
           method: "GET",
           cache: "no-store"
         });
@@ -1021,7 +1037,7 @@
     function renderRows() {
       const rows = getVisibleAccounts();
       if (!rows.length && state.accounts.length) {
-        elements.accountRows.innerHTML = `<tr><td class="no-results" colspan="6">${escapeHtml(translate("noMatchingAccounts"))}</td></tr>`;
+        elements.accountRows.innerHTML = `<tr><td class="no-results" colspan="7">${escapeHtml(translate("noMatchingAccounts"))}</td></tr>`;
         return;
       }
 
@@ -1030,15 +1046,23 @@
       elements.accountRows.innerHTML = rows.map(({ account, index, authFileStatus, mailboxApiStatus }, rowIndex) => {
         const group = getCreatedDateGroup(account);
         const summary = groupSummaries.get(group) || [];
+        const isCollapsed = state.collapsedGroups.has(group);
         const groupMarkup = group !== currentGroup
-          ? `<tr class="group-row"><td colspan="6">
+          ? `<tr class="group-row"><td colspan="7">
               <div class="group-content">
-                <span>${escapeHtml(group)}</span>
+                <button class="group-toggle-btn" type="button" data-group="${escapeHtml(group)}" aria-expanded="${isCollapsed ? "false" : "true"}" title="${isCollapsed ? "展开分组" : "折叠分组"}">
+                  <span class="group-chevron" aria-hidden="true">${isCollapsed ? "＋" : "−"}</span>
+                  <span>${escapeHtml(group)}</span>
+                </button>
                 <button class="group-download-btn cpa-download-btn" type="button" data-cpa-group="${escapeHtml(group)}" title="${escapeHtml(translate("cpaDownloadAction"))}">${escapeHtml(translate("cpaDownloadAction"))}</button>
                 ${summary.length ? `<span class="group-summary">${renderGroupSummary(summary)}</span>` : ""}
               </div>
             </td></tr>`
           : "";
+        if (isCollapsed) {
+          currentGroup = group;
+          return groupMarkup;
+        }
         const hasMailboxUrl = accountHasMailboxUrl(account);
         const actionsMarkup = `<div class="action-buttons">
             ${renderCopyButton(account.email, index, "email", true)}
@@ -1056,12 +1080,36 @@
             <td>${renderMailboxInfoCell(account.mail_subject, account.read_at)}</td>
             <td class="status-cell ${escapeHtml(authFileStatus.type)}"><span class="status-text auth-status-text">${escapeHtml(getAuthFileStatusLabel(authFileStatus) || "/")}</span></td>
             <td class="status-cell ${escapeHtml(authFileStatus.type)}">${getAuthFileMessageText(authFileStatus) ? `<span class="auth-status-message">${escapeHtml(getAuthFileMessageText(authFileStatus))}</span>` : `<span class="muted">/</span>`}</td>
+            <td>${renderAuthMetaCell(authFileStatus)}</td>
             <td class="action-cell">
               ${actionsMarkup}
             </td>
           </tr>
         `;
       }).join("");
+    }
+
+    function renderAuthMetaCell(status) {
+      const provider = stringifyValue(status.provider).trim();
+      const plan = stringifyValue(status.planType).trim();
+      const ws = status.websockets === null || status.websockets === undefined ? "" : `WS ${status.websockets ? "on" : "off"}`;
+      if (!provider && !plan && !ws) {
+        return `<span class="muted">/</span>`;
+      }
+      return `<div class="auth-meta-tags">
+        ${provider ? `<span class="meta-tag provider-tag provider-${providerColorKey(provider)}" title="Provider: ${escapeHtml(provider)}">${escapeHtml(provider)}</span>` : ""}
+        ${plan ? `<span class="meta-tag plan-tag" title="套餐: ${escapeHtml(plan)}">${escapeHtml(plan)}</span>` : ""}
+        ${ws ? `<span class="meta-tag ws-tag">${escapeHtml(ws)}</span>` : ""}
+      </div>`;
+    }
+
+    function providerColorKey(provider) {
+      const value = provider.toLowerCase();
+      let hash = 0;
+      for (let index = 0; index < value.length; index += 1) {
+        hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+      }
+      return String(hash % 7);
     }
 
     function getCreatedDateGroup(account) {
@@ -1182,8 +1230,9 @@
       if (!raw) {
         return "";
       }
+      const decoded = decodeHtmlEntities(raw);
       try {
-        const parsed = JSON.parse(raw);
+        const parsed = JSON.parse(decoded);
         if (
           parsed &&
           typeof parsed === "object" &&
@@ -1196,7 +1245,7 @@
       } catch (_) {
         // Keep non-JSON status_message unchanged.
       }
-      return raw;
+      return decoded;
     }
 
     function getStatusFilterValue(status) {
@@ -1364,6 +1413,18 @@
       const cpaDownloadButton = target.closest(".cpa-download-btn");
       if (cpaDownloadButton) {
         handleCpaDownloadClick(cpaDownloadButton);
+        return;
+      }
+
+      const groupToggleButton = target.closest(".group-toggle-btn");
+      if (groupToggleButton) {
+        const group = groupToggleButton.dataset.group || "";
+        if (state.collapsedGroups.has(group)) {
+          state.collapsedGroups.delete(group);
+        } else {
+          state.collapsedGroups.add(group);
+        }
+        renderRows();
         return;
       }
 
@@ -2003,11 +2064,17 @@
           return;
         }
 
+        const provider = getAccountLoginProvider(account);
+        const loginRoute = getProviderLoginRoute(provider);
+        if (!loginRoute) {
+          throw new Error(translate("unsupportedLoginProvider", { provider: provider || "/" }));
+        }
+
         setStatus(index, "warn", "statusLoggingIn");
         setMessageKey("creatingLoginLink", "", { email: maskEmail(account.email) });
         render();
 
-        const response = await fetch(`${managementBaseUrl}/v0/management/codex-auth-url?is_webui=true`, {
+        const response = await fetch(`${managementBaseUrl}${loginRoute}?is_webui=true`, {
           method: "GET",
           cache: "no-store",
           headers: {
@@ -2021,8 +2088,8 @@
         }
 
         const authUrl = stringifyValue(payload.url);
-        if (!isCodexAuthorizeUrl(authUrl)) {
-          throw new Error(translate("invalidCodexAuthUrl"));
+        if (!isProviderAuthorizeUrl(authUrl)) {
+          throw new Error(translate("invalidProviderAuthUrl", { provider }));
         }
 
         const opened = openLoginTab(authUrl);
@@ -2041,7 +2108,8 @@
         setStatus(index, "ok", "statusLoginOpened");
       } catch (error) {
         setStatus(index, "bad", "statusLoginFailed");
-        setMessageKey("codexLoginFailed", "error", {
+        setMessageKey("providerLoginFailed", "error", {
+          provider: getAccountLoginProvider(account) || "/",
           error: error.message || translate("unknownError")
         });
       } finally {
@@ -2088,14 +2156,19 @@
       }
     }
 
-    function isCodexAuthorizeUrl(rawUrl) {
+    function getAccountLoginProvider(account) {
+      const authFileStatus = getAuthFileStatus(account);
+      return stringifyValue(authFileStatus && authFileStatus.provider || account && account.provider).trim().toLowerCase();
+    }
+
+    function getProviderLoginRoute(provider) {
+      return PROVIDER_LOGIN_ROUTES[provider] || "";
+    }
+
+    function isProviderAuthorizeUrl(rawUrl) {
       try {
         const url = new URL(rawUrl);
-        return url.protocol === "https:" &&
-          url.host === "auth.openai.com" &&
-          url.pathname === "/oauth/authorize" &&
-          Boolean(url.searchParams.get("state")) &&
-          Boolean(url.searchParams.get("code_challenge"));
+        return url.protocol === "https:" && Boolean(url.host);
       } catch (error) {
         return false;
       }
@@ -2227,14 +2300,20 @@
     }
 
     function decodeHtmlEntities(value) {
-      const text = stringifyValue(value);
-      if (!/&(?:[a-zA-Z][a-zA-Z0-9]+|#\d+|#x[0-9a-fA-F]+);/.test(text)) {
-        return text;
-      }
-
+      let text = stringifyValue(value);
       const textarea = document.createElement("textarea");
-      textarea.innerHTML = text;
-      return textarea.value;
+      for (let index = 0; index < 3; index += 1) {
+        if (!/&(?:[a-zA-Z][a-zA-Z0-9]+|#\d+|#x[0-9a-fA-F]+);/.test(text)) {
+          break;
+        }
+        textarea.innerHTML = text;
+        const decoded = textarea.value;
+        if (decoded === text) {
+          break;
+        }
+        text = decoded;
+      }
+      return text;
     }
 
     function formatPayloadDate(value) {

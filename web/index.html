@@ -10,16 +10,26 @@
 <body>
   <main class="page">
     <div class="topbar">
-      <div>
+      <div class="identity">
+        <div class="product-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none">
+            <path d="M16 3.5 27 9.8v12.4L16 28.5 5 22.2V9.8L16 3.5Z" stroke="currentColor" stroke-width="1.6"/>
+            <path d="m10.5 16 3.6 3.7 7.5-8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div>
         <div class="title-row">
+          <p class="eyebrow">CPA ACCOUNT PILOT</p>
           <h1 id="pageTitle">账户管理</h1>
         </div>
         <p id="pageSubtitle" class="subtitle">导入账户文件中的账户对象，刷新邮箱地址获取邮件信息并持久化回写数据。</p>
+        </div>
       </div>
     </div>
 
     <section class="toolbar" aria-label="操作栏">
-      <div id="settingsWrap" class="settings-wrap">
+      <div class="workflow-actions">
+        <div id="settingsWrap" class="settings-wrap">
         <button id="settingsBtn" class="settings-btn" type="button" aria-expanded="false" aria-controls="settingsPanel" aria-label="Settings" title="Settings">
           <svg class="settings-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M9.7 3.4 9.3 5a1.8 1.8 0 0 1-2.1 1.2l-1.6-.4-1.5 2.6 1.2 1.1a1.8 1.8 0 0 1 0 2.6l-1.2 1.1 1.5 2.6 1.6-.4A1.8 1.8 0 0 1 9.3 17l.4 1.6h3l.4-1.6a1.8 1.8 0 0 1 2.1-1.2l1.6.4 1.5-2.6-1.2-1.1a1.8 1.8 0 0 1 0-2.6l1.2-1.1-1.5-2.6-1.6.4A1.8 1.8 0 0 1 13.1 5l-.4-1.6h-3Z"></path>
@@ -45,11 +55,13 @@
           </div>
         </div>
       </div>
-      <button id="openFileBtn" class="primary" type="button">导入账户</button>
-      <input id="fileInput" class="hidden" type="file">
-      <button id="reloadFileBtn" type="button" disabled>刷新认证</button>
-      <button id="refreshBtn" type="button" disabled>刷新邮箱</button>
+        <button id="openFileBtn" class="primary" type="button">导入账户</button>
+        <input id="fileInput" class="hidden" type="file">
+        <button id="reloadFileBtn" type="button" disabled>刷新认证</button>
+        <button id="refreshBtn" type="button" disabled>刷新邮箱</button>
+      </div>
       <div class="query-controls">
+        <span class="filter-label">筛选视图</span>
         <div id="statusFilter" class="segmented-control status-filter" role="group" aria-label="认证状态">
           <button class="segmented-option status-filter-option is-active" type="button" data-status-filter="all" aria-pressed="true">全部</button>
         </div>
@@ -64,7 +76,8 @@
       </div>
     </section>
 
-    <div class="message-row">
+    <div class="message-row" role="status" aria-live="polite">
+      <span class="message-indicator" aria-hidden="true"></span>
       <p id="message" class="message">请选择账户文件。</p>
     </div>
 
@@ -80,6 +93,7 @@
           <col class="col-mail-info">
           <col class="col-auth-status">
           <col class="col-auth-status-msg">
+          <col class="col-auth-meta">
           <col class="col-action">
         </colgroup>
         <thead>
@@ -89,6 +103,7 @@
             <th id="mailInfoHeader">邮件主题 / UTC+8</th>
             <th id="authStatusHeader">认证状态</th>
             <th id="authDescriptionHeader">描述</th>
+            <th id="authMetaHeader">账户信息</th>
             <th id="actionsHeader">操作</th>
           </tr>
         </thead>

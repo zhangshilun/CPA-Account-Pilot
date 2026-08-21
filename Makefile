@@ -1,5 +1,5 @@
-PLUGIN_ID := cpa-account-pilot
-VERSION ?= 0.1.0
+PLUGIN_ID := cpa-account-vault
+VERSION ?= 0.1.3
 GO ?= go
 DIST_DIR := $(CURDIR)/dist
 GOOS ?= $(shell $(GO) env GOOS)

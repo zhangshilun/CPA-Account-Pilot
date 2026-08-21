@@ -1,4 +1,4 @@
-# CPA Account Pilot
+# CPA Account Vault
 
 CLIProxyAPI 原生插件，用于管理账号文件、复制账号密码、查看凭证状态和快速登录。
 
@@ -13,19 +13,19 @@ make build
 构建产物位于 `dist/`：
 
 ```text
-dist/cpa-account-pilot.dylib   # macOS
-dist/cpa-account-pilot.so      # Linux
-dist/cpa-account-pilot.dll     # Windows
+dist/cpa-account-vault.dylib   # macOS
+dist/cpa-account-vault.so      # Linux
+dist/cpa-account-vault.dll     # Windows
 ```
 
 将对应平台的插件文件放入 CLIProxyAPI 插件目录并启动或重新加载 CLIProxyAPI。
 
 ### 2. 打开管理页面
 
-通过 CLIProxyAPI 管理页面进入 CPA Account Pilot，或访问：
+通过 CLIProxyAPI 管理页面进入 CPA Account Vault，或访问：
 
 ```text
-/v0/resource/plugins/cpa-account-pilot/index.html
+/v0/resource/plugins/cpa-account-vault/index.html
 ```
 
 管理页面支持：
@@ -42,12 +42,18 @@ dist/cpa-account-pilot.dll     # Windows
 账户文件保存在：
 
 ```text
-/CLIProxyAPI/data/cpa-account-pilot/
+/CLIProxyAPI/data/cpa-account-vault/
 ```
 
-每个账号单独保存为 JSON 文件，密码使用自动生成的 `private_accounts.key` 加密保存。首次加载插件时会自动创建密钥；已有密钥不会被覆盖。
+每个账号单独保存为 JSON 文件，密码使用插件可视化配置项 `CPA_ACCOUNTS_VAULT_KEY` 提供的 32 字节主密钥加密保存。该值必须是标准 Base64 编码。`CPA_ACCOUNTS_VAULT_KEY` 为必填项，`CPA_ACCOUNTS_VAULT_DIR` 可选，默认值为 `/CLIProxyAPI/data/cpa-account-vault/`。
 
-请勿删除 `private_accounts.key`，否则已保存的密码无法解密。
+生成密钥示例：
+
+```bash
+openssl rand -base64 32
+```
+
+将命令输出的密钥填写到 CLIProxyAPI 的插件配置页面。配置完成后请一直使用同一个密钥，否则已有账号密码无法解密。
 
 ## LICENSE
 
